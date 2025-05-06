@@ -10,6 +10,7 @@
  * - Configurable formatting
  * - Conditional compilation for embedded systems
  * - JSON output format
+ * - Syslog integration (local and remote)
  */
 
 #ifndef XLOG_H
@@ -34,6 +35,19 @@
     // Minimal version for embedded systems
     #define XLOG_NO_FILESYSTEM
     #define XLOG_MINIMAL_FORMAT
+#endif
+
+#ifndef XLOG_EMBEDDED
+    #if defined(__linux__) || defined(__APPLE__) || defined(__unix__)
+        #define XLOG_SYSLOG_AVAILABLE
+        #include <syslog.h>
+        #include <sys/socket.h>
+        #include <netinet/in.h>
+        #include <arpa/inet.h>
+        #include <unistd.h>
+        #include <netdb.h>
+        #include <cstring> // For memset, memcpy
+    #endif
 #endif
 
 namespace xlog {
@@ -259,6 +273,157 @@ public:
 private:
     OutputType type_;
 };
+
+#ifdef XLOG_SYSLOG_AVAILABLE
+/**
+ * Convert XLog level to syslog priority
+ */
+inline int xlog_level_to_syslog(Level level) {
+    switch (level) {
+        case Level::DEBUG: return LOG_DEBUG;
+        case Level::INFO:  return LOG_INFO;
+        case Level::WARN:  return LOG_WARNING;
+        case Level::ERROR: return LOG_ERR;
+        case Level::FATAL: return LOG_CRIT;
+        default:           return LOG_NOTICE;
+    }
+}
+
+/**
+ * Local Syslog sink for UNIX-based systems
+ */
+class SyslogSink : public Sink {
+public:
+    SyslogSink(const std::string& ident, Level level = Level::DEBUG,
+              int facility = LOG_USER)
+        : Sink(level), ident_(ident), opened_(false) {
+        
+        // Open syslog connection
+        openlog(ident_.c_str(), LOG_PID | LOG_CONS, facility);
+        opened_ = true;
+    }
+    
+    ~SyslogSink() {
+        if (opened_) {
+            closelog();
+        }
+    }
+    
+    void log(const LogRecord& record) override {
+        if (!should_log(record.level)) return;
+        
+        int priority = xlog_level_to_syslog(record.level);
+        syslog(priority, "%s", record.message.c_str());
+    }
+    
+private:
+    std::string ident_;
+    bool opened_;
+};
+
+/**
+ * Remote Syslog sink that sends logs to a remote syslog server via UDP
+ */
+class RemoteSyslogSink : public Sink {
+public:
+    RemoteSyslogSink(const std::string& host, 
+                     int port = 514,  // Standard syslog port
+                     const std::string& app_name = "xlog",
+                     Level level = Level::DEBUG,
+                     int facility = LOG_USER)
+        : Sink(level), 
+          host_(host), 
+          port_(port), 
+          app_name_(app_name),
+          facility_(facility),
+          sock_(-1),
+          hostname_("localhost") {
+        
+        // Initialize socket
+        sock_ = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sock_ < 0) {
+            std::cerr << "Error creating UDP socket for remote syslog" << std::endl;
+            return;
+        }
+        
+        // Resolve remote host
+        struct hostent* server = gethostbyname(host_.c_str());
+        if (server == nullptr) {
+            std::cerr << "Error resolving remote syslog host: " << host_ << std::endl;
+            close(sock_);
+            sock_ = -1;
+            return;
+        }
+        
+        // Setup server address
+        memset(&server_addr_, 0, sizeof(server_addr_));
+        server_addr_.sin_family = AF_INET;
+        memcpy(&server_addr_.sin_addr.s_addr, server->h_addr, server->h_length);
+        server_addr_.sin_port = htons(port_);
+        
+        // Get local hostname for syslog messages
+        char hostname[256];
+        if (gethostname(hostname, sizeof(hostname)) == 0) {
+            hostname_ = hostname;
+        }
+    }
+    
+    ~RemoteSyslogSink() {
+        if (sock_ >= 0) {
+            close(sock_);
+        }
+    }
+    
+    void log(const LogRecord& record) override {
+        if (!should_log(record.level) || sock_ < 0) return;
+        
+        // Format according to RFC 5424 syslog protocol
+        std::string syslog_msg = format_syslog_message(record);
+        
+        // Send to remote server
+        sendto(sock_, syslog_msg.c_str(), syslog_msg.length(), 0,
+               (struct sockaddr*)&server_addr_, sizeof(server_addr_));
+    }
+    
+private:
+    std::string format_syslog_message(const LogRecord& record) {
+        int priority = facility_ * 8 + xlog_level_to_syslog(record.level);
+        
+        // Get timestamp
+        auto time_t = std::chrono::system_clock::to_time_t(record.time);
+        std::tm tm = {};
+#if defined(_WIN32)
+        localtime_s(&tm, &time_t);
+#else
+        localtime_r(&time_t, &tm);
+#endif
+        
+        char timestamp[32];
+        std::strftime(timestamp, sizeof(timestamp), "%FT%T%z", &tm);
+        
+        // Construct syslog message with format: <PRI>VERSION TIMESTAMP HOSTNAME APP-NAME PROCID MSGID STRUCTURED-DATA MSG
+        std::stringstream ss;
+        ss << "<" << priority << ">1 " // PRI and VERSION
+           << timestamp << " "          // TIMESTAMP
+           << hostname_ << " "          // HOSTNAME
+           << app_name_ << " "          // APP-NAME
+           << getpid() << " "           // PROCID
+           << record.logger_name << " " // MSGID
+           << "- "                      // STRUCTURED-DATA (none)
+           << record.message;           // MSG
+        
+        return ss.str();
+    }
+    
+    std::string host_;
+    int port_;
+    std::string app_name_;
+    int facility_;
+    int sock_;
+    struct sockaddr_in server_addr_;
+    std::string hostname_;
+};
+#endif // XLOG_SYSLOG_AVAILABLE
 
 #ifndef XLOG_NO_FILESYSTEM
 /**
