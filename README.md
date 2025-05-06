@@ -12,6 +12,7 @@ A lightweight, header-only, cross-platform C++ logging library suitable for both
   - Console logging (stdout/stderr)
   - File logging with rotation
   - JSON formatting
+  - Syslog integration (local and remote via UDP)
   - Custom callback sinks
 - **Cross-Platform Compatibility**
   - Works on Windows, Linux, macOS
@@ -111,6 +112,33 @@ logger->add_sink(json_file_sink);
 // {"timestamp":"2025-05-06T10:15:32","level":"INFO","logger":"MyApp","message":"Example message"}
 ```
 
+### Syslog Integration
+
+XLog supports both local and remote syslog for UNIX-based systems:
+
+```cpp
+// Local syslog
+#ifdef XLOG_SYSLOG_AVAILABLE
+    auto syslog_sink = std::make_shared<xlog::SyslogSink>(
+        "myapp",         // Application identifier
+        xlog::Level::INFO,  // Min level
+        LOG_USER        // Facility
+    );
+    logger->add_sink(syslog_sink);
+    
+    // Remote syslog
+    auto remote_syslog_sink = std::make_shared<xlog::RemoteSyslogSink>(
+        "log-server.example.com",  // Remote server hostname or IP
+        514,                      // Standard syslog port
+        "myapp",                  // Application name
+        xlog::Level::WARN         // Min level
+    );
+    logger->add_sink(remote_syslog_sink);
+#endif
+```
+
+The remote syslog sink implements the RFC 5424 protocol over UDP, making it compatible with most syslog servers like rsyslog, syslog-ng, or cloud-based log management systems.
+
 ### Custom Callback Sink
 
 You can create custom sinks using the callback functionality:
@@ -198,7 +226,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 - Pattern-based filtering
 - Memory circular buffer sink
 - Structured logging
-- Network/remote logging
+- More network protocols
 - Log batching
 - Configuration from file
 - Contextual logging
