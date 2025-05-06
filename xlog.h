@@ -1,8 +1,15 @@
 /**
- * XLog - A lightweight, cross-platform C++ logging library
- * Suitable for desktop and embedded systems
+ * @file xlog.h
+ * @brief A lightweight, cross-platform C++ logging library
+ * @author DatanoiseTV
+ * @date 2025-05-06
  * 
- * Features:
+ * XLog is a flexible logging library suitable for both desktop and embedded systems.
+ * It provides multiple logging levels, various output destinations, and thread-safety
+ * with minimal external dependencies.
+ * 
+ * @details
+ * Features include:
  * - Multiple logging levels (DEBUG, INFO, WARN, ERROR, FATAL)
  * - Multiple sink types (console, file with rotation, custom sinks)
  * - Thread-safe operations
@@ -31,12 +38,35 @@
 #include <atomic>
 #include <unordered_map>
 
+/**
+ * @def XLOG_EMBEDDED
+ * @brief Define for embedded systems with limited resources
+ * 
+ * When defined, this macro activates resource-saving features
+ * for embedded systems, including disabling filesystem operations
+ * and using minimal formatting.
+ */
 #ifdef XLOG_EMBEDDED
-    // Minimal version for embedded systems
+    /**
+     * @def XLOG_NO_FILESYSTEM
+     * @brief Disable filesystem operations for embedded systems
+     */
     #define XLOG_NO_FILESYSTEM
+    
+    /**
+     * @def XLOG_MINIMAL_FORMAT
+     * @brief Use minimal message formatting for embedded systems
+     */
     #define XLOG_MINIMAL_FORMAT
 #endif
 
+/**
+ * @def XLOG_SYSLOG_AVAILABLE
+ * @brief Enables syslog integration on supported platforms
+ * 
+ * This is automatically defined on UNIX-based systems when
+ * not in embedded mode.
+ */
 #ifndef XLOG_EMBEDDED
     #if defined(__linux__) || defined(__APPLE__) || defined(__unix__)
         #define XLOG_SYSLOG_AVAILABLE
@@ -50,6 +80,10 @@
     #endif
 #endif
 
+/**
+ * @namespace xlog
+ * @brief Main namespace for the XLog library
+ */
 namespace xlog {
 
 // Forward declarations
@@ -57,19 +91,24 @@ class Sink;
 class Logger;
 
 /**
- * Logging levels
+ * @enum Level
+ * @brief Logging severity levels
+ * 
+ * Defines the available logging levels in order of increasing severity.
  */
 enum class Level {
-    DEBUG,
-    INFO,
-    WARN,
-    ERROR,
-    FATAL,
-    OFF
+    DEBUG,  /**< Detailed information, typically useful only when diagnosing problems */
+    INFO,   /**< Confirmation that things are working as expected */
+    WARN,   /**< Indication that something unexpected happened, or may happen in the near future */
+    ERROR,  /**< Due to a more serious problem, the software has not been able to perform some function */
+    FATAL,  /**< A very severe error event that will presumably lead the application to abort */
+    OFF     /**< Special level used to disable logging */
 };
 
 /**
- * Convert Level to string
+ * @brief Convert Level enum to string representation
+ * @param level The logging level to convert
+ * @return String representation of the level
  */
 inline std::string level_to_string(Level level) {
     switch (level) {
@@ -84,7 +123,9 @@ inline std::string level_to_string(Level level) {
 }
 
 /**
- * Convert string to Level
+ * @brief Convert string to Level enum
+ * @param str String representation of the level
+ * @return The corresponding logging level (defaults to INFO if not recognized)
  */
 inline Level string_to_level(const std::string& str) {
     if (str == "DEBUG") return Level::DEBUG;
@@ -97,41 +138,85 @@ inline Level string_to_level(const std::string& str) {
 }
 
 /**
- * Log record structure
+ * @struct LogRecord
+ * @brief Structure containing all information about a log entry
+ * 
+ * This structure is passed to sinks for output formatting and processing.
  */
 struct LogRecord {
-    std::chrono::system_clock::time_point time;
-    Level level;
-    std::string message;
-    std::string logger_name;
+    std::chrono::system_clock::time_point time;  /**< Timestamp when the log record was created */
+    Level level;                                 /**< Severity level of the log record */
+    std::string message;                         /**< The log message content */
+    std::string logger_name;                     /**< Name of the logger that created this record */
 };
 
 /**
- * Base class for all sinks
+ * @class Sink
+ * @brief Base abstract class for all log output destinations
+ * 
+ * A sink is responsible for outputting log records to a specific destination
+ * such as the console, a file, syslog, etc. Each sink can filter logs based on
+ * their level.
  */
 class Sink {
 public:
+    /**
+     * @brief Constructor
+     * @param level Minimum log level this sink will process
+     */
     Sink(Level level = Level::DEBUG) : level_(level) {}
+    
+    /**
+     * @brief Virtual destructor
+     */
     virtual ~Sink() = default;
     
+    /**
+     * @brief Process a log record
+     * 
+     * This method must be implemented by derived classes to define
+     * how log records are processed for a specific sink.
+     * 
+     * @param record The log record to process
+     */
     virtual void log(const LogRecord& record) = 0;
     
+    /**
+     * @brief Set the minimum log level
+     * @param level New minimum log level
+     */
     void set_level(Level level) { level_ = level; }
+    
+    /**
+     * @brief Get the current minimum log level
+     * @return Current minimum level
+     */
     Level level() const { return level_; }
     
+    /**
+     * @brief Check if a message with the given level should be logged
+     * @param msg_level Level of the message to check
+     * @return True if the message should be logged
+     */
     bool should_log(Level msg_level) const {
         return msg_level >= level_;
     }
     
 protected:
-    Level level_;
+    Level level_;  /**< Minimum log level this sink will process */
 };
 
 /**
- * JSON formatter for log records
+ * @class JsonFormatter
+ * @brief Utility class for formatting log records as JSON
  */
 class JsonFormatter {
 public:
+    /**
+     * @brief Format a log record as JSON
+     * @param record The log record to format
+     * @return JSON representation of the log record
+     */
     static std::string format(const LogRecord& record) {
         std::stringstream ss;
         auto time_t = std::chrono::system_clock::to_time_t(record.time);
@@ -157,6 +242,11 @@ public:
     }
     
 private:
+    /**
+     * @brief Escape special characters in a string for JSON
+     * @param input String to escape
+     * @return Escaped string safe for JSON
+     */
     static std::string escape_json(const std::string& input) {
         std::string output;
         output.reserve(input.length() * 2); // Reserve space to avoid reallocations
@@ -188,18 +278,32 @@ private:
 };
 
 /**
- * Console sink (stdout/stderr)
+ * @class ConsoleSink
+ * @brief Sink that outputs log records to the console
  */
 class ConsoleSink : public Sink {
 public:
+    /**
+     * @enum OutputType
+     * @brief Type of console output stream
+     */
     enum class OutputType {
-        Stdout,
-        Stderr
+        Stdout,  /**< Standard output stream */
+        Stderr   /**< Standard error stream */
     };
     
+    /**
+     * @brief Constructor
+     * @param type Output stream type (stdout or stderr)
+     * @param level Minimum log level this sink will process
+     */
     ConsoleSink(OutputType type = OutputType::Stdout, Level level = Level::DEBUG)
         : Sink(level), type_(type) {}
     
+    /**
+     * @brief Process a log record by outputting to console
+     * @param record The log record to process
+     */
     void log(const LogRecord& record) override {
         if (!should_log(record.level)) return;
         
@@ -212,6 +316,11 @@ public:
     }
     
 private:
+    /**
+     * @brief Format a log record for console output
+     * @param record The log record to format
+     * @return Formatted log message
+     */
     std::string format(const LogRecord& record) {
         std::stringstream ss;
         auto time_t = std::chrono::system_clock::to_time_t(record.time);
@@ -243,22 +352,36 @@ private:
         return ss.str();
     }
     
-    OutputType type_;
+    OutputType type_;  /**< Type of console output stream */
 };
 
 /**
- * JSON console sink that formats log records as JSON
+ * @class JsonConsoleSink
+ * @brief Console sink that outputs log records in JSON format
  */
 class JsonConsoleSink : public Sink {
 public:
+    /**
+     * @enum OutputType
+     * @brief Type of console output stream
+     */
     enum class OutputType {
-        Stdout,
-        Stderr
+        Stdout,  /**< Standard output stream */
+        Stderr   /**< Standard error stream */
     };
     
+    /**
+     * @brief Constructor
+     * @param type Output stream type (stdout or stderr)
+     * @param level Minimum log level this sink will process
+     */
     JsonConsoleSink(OutputType type = OutputType::Stdout, Level level = Level::DEBUG)
         : Sink(level), type_(type) {}
     
+    /**
+     * @brief Process a log record by outputting to console in JSON format
+     * @param record The log record to process
+     */
     void log(const LogRecord& record) override {
         if (!should_log(record.level)) return;
         
@@ -271,12 +394,14 @@ public:
     }
     
 private:
-    OutputType type_;
+    OutputType type_;  /**< Type of console output stream */
 };
 
 #ifdef XLOG_SYSLOG_AVAILABLE
 /**
- * Convert XLog level to syslog priority
+ * @brief Convert XLog level to syslog priority
+ * @param level XLog severity level
+ * @return Corresponding syslog priority
  */
 inline int xlog_level_to_syslog(Level level) {
     switch (level) {
@@ -290,10 +415,19 @@ inline int xlog_level_to_syslog(Level level) {
 }
 
 /**
- * Local Syslog sink for UNIX-based systems
+ * @class SyslogSink
+ * @brief Sink that outputs log records to the local syslog service
+ * 
+ * Available only on UNIX-based systems when not in embedded mode.
  */
 class SyslogSink : public Sink {
 public:
+    /**
+     * @brief Constructor
+     * @param ident Program identifier that appears in log messages
+     * @param level Minimum log level this sink will process
+     * @param facility Syslog facility to use
+     */
     SyslogSink(const std::string& ident, Level level = Level::DEBUG,
               int facility = LOG_USER)
         : Sink(level), ident_(ident), opened_(false) {
@@ -303,12 +437,21 @@ public:
         opened_ = true;
     }
     
+    /**
+     * @brief Destructor
+     * 
+     * Closes the connection to syslog.
+     */
     ~SyslogSink() {
         if (opened_) {
             closelog();
         }
     }
     
+    /**
+     * @brief Process a log record by sending it to syslog
+     * @param record The log record to process
+     */
     void log(const LogRecord& record) override {
         if (!should_log(record.level)) return;
         
@@ -317,15 +460,27 @@ public:
     }
     
 private:
-    std::string ident_;
-    bool opened_;
+    std::string ident_;  /**< Program identifier that appears in log messages */
+    bool opened_;        /**< Flag indicating if syslog connection is open */
 };
 
 /**
- * Remote Syslog sink that sends logs to a remote syslog server via UDP
+ * @class RemoteSyslogSink
+ * @brief Sink that sends log records to a remote syslog server via UDP
+ * 
+ * Implements RFC 5424 syslog protocol for remote logging.
+ * Available only on UNIX-based systems when not in embedded mode.
  */
 class RemoteSyslogSink : public Sink {
 public:
+    /**
+     * @brief Constructor
+     * @param host Remote syslog server hostname or IP address
+     * @param port Remote syslog server port (default: 514)
+     * @param app_name Application name to include in syslog messages
+     * @param level Minimum log level this sink will process
+     * @param facility Syslog facility to use
+     */
     RemoteSyslogSink(const std::string& host, 
                      int port = 514,  // Standard syslog port
                      const std::string& app_name = "xlog",
@@ -368,12 +523,21 @@ public:
         }
     }
     
+    /**
+     * @brief Destructor
+     * 
+     * Closes the UDP socket.
+     */
     ~RemoteSyslogSink() {
         if (sock_ >= 0) {
             close(sock_);
         }
     }
     
+    /**
+     * @brief Process a log record by sending it to a remote syslog server
+     * @param record The log record to process
+     */
     void log(const LogRecord& record) override {
         if (!should_log(record.level) || sock_ < 0) return;
         
@@ -386,6 +550,11 @@ public:
     }
     
 private:
+    /**
+     * @brief Format a log record according to RFC 5424 syslog protocol
+     * @param record The log record to format
+     * @return Formatted syslog message
+     */
     std::string format_syslog_message(const LogRecord& record) {
         int priority = facility_ * 8 + xlog_level_to_syslog(record.level);
         
@@ -415,22 +584,30 @@ private:
         return ss.str();
     }
     
-    std::string host_;
-    int port_;
-    std::string app_name_;
-    int facility_;
-    int sock_;
-    struct sockaddr_in server_addr_;
-    std::string hostname_;
+    std::string host_;              /**< Remote syslog server hostname or IP */
+    int port_;                      /**< Remote syslog server port */
+    std::string app_name_;          /**< Application name for syslog messages */
+    int facility_;                  /**< Syslog facility */
+    int sock_;                      /**< UDP socket file descriptor */
+    struct sockaddr_in server_addr_; /**< Server address structure */
+    std::string hostname_;          /**< Local hostname for syslog messages */
 };
 #endif // XLOG_SYSLOG_AVAILABLE
 
 #ifndef XLOG_NO_FILESYSTEM
 /**
- * File sink with rotation capability
+ * @class FileSink
+ * @brief Sink that writes log records to a file with rotation capability
  */
 class FileSink : public Sink {
 public:
+    /**
+     * @brief Constructor
+     * @param base_filename Base name of the log file
+     * @param level Minimum log level this sink will process
+     * @param max_size Maximum size of a log file before rotation, in bytes
+     * @param max_files Maximum number of rotated log files to keep
+     */
     FileSink(const std::string& base_filename, 
              Level level = Level::DEBUG,
              size_t max_size = 10 * 1024 * 1024,  // 10 MB default
@@ -443,6 +620,11 @@ public:
         open_file();
     }
     
+    /**
+     * @brief Destructor
+     * 
+     * Closes the log file.
+     */
     ~FileSink() {
         std::lock_guard<std::mutex> lock(mutex_);
         if (file_.is_open()) {
@@ -450,6 +632,10 @@ public:
         }
     }
     
+    /**
+     * @brief Process a log record by writing it to a file
+     * @param record The log record to process
+     */
     void log(const LogRecord& record) override {
         if (!should_log(record.level)) return;
         
@@ -469,6 +655,11 @@ public:
     }
     
 private:
+    /**
+     * @brief Format a log record for file output
+     * @param record The log record to format
+     * @return Formatted log message
+     */
     std::string format(const LogRecord& record) {
         std::stringstream ss;
         auto time_t = std::chrono::system_clock::to_time_t(record.time);
@@ -492,6 +683,9 @@ private:
         return ss.str();
     }
     
+    /**
+     * @brief Open the log file
+     */
     void open_file() {
         file_.open(base_filename_, std::ios::app);
         if (file_.is_open()) {
@@ -500,6 +694,12 @@ private:
         }
     }
     
+    /**
+     * @brief Rotate log files
+     * 
+     * Closes the current log file, shifts existing rotated files,
+     * and opens a new log file.
+     */
     void rotate_log() {
         if (file_.is_open()) {
             file_.close();
@@ -529,19 +729,27 @@ private:
         open_file();
     }
     
-    std::string base_filename_;
-    size_t max_size_;
-    int max_files_;
-    size_t current_size_;
-    std::ofstream file_;
-    std::mutex mutex_;
+    std::string base_filename_;  /**< Base name of the log file */
+    size_t max_size_;           /**< Maximum size of a log file before rotation */
+    int max_files_;             /**< Maximum number of rotated log files to keep */
+    size_t current_size_;       /**< Current size of the log file */
+    std::ofstream file_;        /**< Output file stream */
+    std::mutex mutex_;          /**< Mutex for thread safety */
 };
 
 /**
- * JSON file sink that writes log records as JSON to a file
+ * @class JsonFileSink
+ * @brief File sink that writes log records in JSON format
  */
 class JsonFileSink : public Sink {
 public:
+    /**
+     * @brief Constructor
+     * @param base_filename Base name of the log file
+     * @param level Minimum log level this sink will process
+     * @param max_size Maximum size of a log file before rotation, in bytes
+     * @param max_files Maximum number of rotated log files to keep
+     */
     JsonFileSink(const std::string& base_filename, 
                 Level level = Level::DEBUG,
                 size_t max_size = 10 * 1024 * 1024,  // 10 MB default
@@ -554,6 +762,11 @@ public:
         open_file();
     }
     
+    /**
+     * @brief Destructor
+     * 
+     * Closes the log file.
+     */
     ~JsonFileSink() {
         std::lock_guard<std::mutex> lock(mutex_);
         if (file_.is_open()) {
@@ -561,6 +774,10 @@ public:
         }
     }
     
+    /**
+     * @brief Process a log record by writing it to a file in JSON format
+     * @param record The log record to process
+     */
     void log(const LogRecord& record) override {
         if (!should_log(record.level)) return;
         
@@ -580,6 +797,9 @@ public:
     }
     
 private:
+    /**
+     * @brief Open the log file
+     */
     void open_file() {
         file_.open(base_filename_, std::ios::app);
         if (file_.is_open()) {
@@ -588,6 +808,12 @@ private:
         }
     }
     
+    /**
+     * @brief Rotate log files
+     * 
+     * Closes the current log file, shifts existing rotated files,
+     * and opens a new log file.
+     */
     void rotate_log() {
         if (file_.is_open()) {
             file_.close();
@@ -617,56 +843,98 @@ private:
         open_file();
     }
     
-    std::string base_filename_;
-    size_t max_size_;
-    int max_files_;
-    size_t current_size_;
-    std::ofstream file_;
-    std::mutex mutex_;
+    std::string base_filename_;  /**< Base name of the log file */
+    size_t max_size_;           /**< Maximum size of a log file before rotation */
+    int max_files_;             /**< Maximum number of rotated log files to keep */
+    size_t current_size_;       /**< Current size of the log file */
+    std::ofstream file_;        /**< Output file stream */
+    std::mutex mutex_;          /**< Mutex for thread safety */
 };
 #endif // XLOG_NO_FILESYSTEM
 
 /**
- * Custom sink using a callback function
+ * @class CallbackSink
+ * @brief Sink that invokes a custom callback function for each log record
  */
 class CallbackSink : public Sink {
 public:
+    /**
+     * @typedef Callback
+     * @brief Type definition for the callback function
+     */
     using Callback = std::function<void(const LogRecord&)>;
     
+    /**
+     * @brief Constructor
+     * @param callback Function to call for each log record
+     * @param level Minimum log level this sink will process
+     */
     CallbackSink(Callback callback, Level level = Level::DEBUG)
         : Sink(level), callback_(callback) {}
     
+    /**
+     * @brief Process a log record by calling the callback function
+     * @param record The log record to process
+     */
     void log(const LogRecord& record) override {
         if (!should_log(record.level)) return;
         callback_(record);
     }
     
 private:
-    Callback callback_;
+    Callback callback_;  /**< Callback function to call for each log record */
 };
 
 /**
- * Logger class
+ * @class Logger
+ * @brief Main logging class that distributes log messages to sinks
+ * 
+ * The Logger class is the primary interface for application code to generate
+ * log messages. It manages a collection of sinks and forwards log records to
+ * all of them.
  */
 class Logger {
 public:
+    /**
+     * @brief Constructor
+     * @param name Logger name that will appear in log records
+     * @param level Minimum log level this logger will process
+     */
     Logger(const std::string& name, Level level = Level::DEBUG)
         : name_(name), level_(level) {}
     
+    /**
+     * @brief Add a sink to this logger
+     * @tparam SinkPtr Type of the sink pointer (usually std::shared_ptr<SinkType>)
+     * @param sink Sink to add
+     */
     template<typename SinkPtr>
     void add_sink(SinkPtr sink) {
         std::lock_guard<std::mutex> lock(mutex_);
         sinks_.push_back(std::move(sink));
     }
     
+    /**
+     * @brief Set the minimum log level
+     * @param level New minimum log level
+     */
     void set_level(Level level) {
         level_ = level;
     }
     
+    /**
+     * @brief Get the current minimum log level
+     * @return Current minimum level
+     */
     Level level() const {
         return level_;
     }
     
+    /**
+     * @brief Log a message with the specified level
+     * @param level Severity level of the message
+     * @param message Log message content
+     */
     void log(Level level, const std::string& message) {
         if (level < level_) return;
         
@@ -683,43 +951,80 @@ public:
         }
     }
     
+    /**
+     * @brief Log a debug message
+     * @param message Log message content
+     */
     void debug(const std::string& message) {
         log(Level::DEBUG, message);
     }
     
+    /**
+     * @brief Log an info message
+     * @param message Log message content
+     */
     void info(const std::string& message) {
         log(Level::INFO, message);
     }
     
+    /**
+     * @brief Log a warning message
+     * @param message Log message content
+     */
     void warn(const std::string& message) {
         log(Level::WARN, message);
     }
     
+    /**
+     * @brief Log an error message
+     * @param message Log message content
+     */
     void error(const std::string& message) {
         log(Level::ERROR, message);
     }
     
+    /**
+     * @brief Log a fatal error message
+     * @param message Log message content
+     */
     void fatal(const std::string& message) {
         log(Level::FATAL, message);
     }
     
 private:
-    std::string name_;
-    Level level_;
-    std::vector<std::shared_ptr<Sink>> sinks_;
-    std::mutex mutex_;
+    std::string name_;                           /**< Logger name */
+    Level level_;                                /**< Minimum log level */
+    std::vector<std::shared_ptr<Sink>> sinks_;   /**< Collection of sinks */
+    std::mutex mutex_;                           /**< Mutex for thread safety */
 };
 
 /**
- * LoggerRegistry for managing loggers
+ * @class LoggerRegistry
+ * @brief Singleton registry for managing loggers
+ * 
+ * The LoggerRegistry maintains a collection of named loggers and ensures
+ * that the same logger instance is always returned for a given name.
  */
 class LoggerRegistry {
 public:
+    /**
+     * @brief Get the singleton instance
+     * @return Reference to the singleton instance
+     */
     static LoggerRegistry& instance() {
         static LoggerRegistry registry;
         return registry;
     }
     
+    /**
+     * @brief Get or create a logger with the specified name
+     * 
+     * If a logger with the given name already exists, it is returned.
+     * Otherwise, a new logger is created, stored, and returned.
+     * 
+     * @param name Name of the logger
+     * @return Shared pointer to the logger
+     */
     std::shared_ptr<Logger> get_or_create(const std::string& name) {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = loggers_.find(name);
@@ -732,6 +1037,10 @@ public:
         return logger;
     }
     
+    /**
+     * @brief Set the global log level for all loggers
+     * @param level New minimum log level for all loggers
+     */
     void set_global_level(Level level) {
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto& pair : loggers_) {
@@ -740,16 +1049,35 @@ public:
     }
     
 private:
+    /**
+     * @brief Private constructor for singleton pattern
+     */
     LoggerRegistry() = default;
-    std::unordered_map<std::string, std::shared_ptr<Logger>> loggers_;
-    std::mutex mutex_;
+    
+    std::unordered_map<std::string, std::shared_ptr<Logger>> loggers_;  /**< Map of logger names to logger instances */
+    std::mutex mutex_;  /**< Mutex for thread safety */
 };
 
 } // namespace xlog
 
-// Convenient macros
+/**
+ * @def XLOG_GET_LOGGER
+ * @brief Convenience macro to get a logger from the registry
+ * @param name Name of the logger to get or create
+ * @return Shared pointer to the logger
+ */
 #define XLOG_GET_LOGGER(name) xlog::LoggerRegistry::instance().get_or_create(name)
 
+/**
+ * @def XLOG_DEBUG
+ * @brief Log a debug message
+ * 
+ * This macro checks the log level before formatting the message to avoid
+ * unnecessary string operations when the message would be filtered out.
+ * 
+ * @param logger Logger to use
+ * @param message Message to log (can use stream operators)
+ */
 #define XLOG_DEBUG(logger, message) \
     do { \
         if (logger->level() <= xlog::Level::DEBUG) { \
@@ -759,6 +1087,16 @@ private:
         } \
     } while(0)
 
+/**
+ * @def XLOG_INFO
+ * @brief Log an info message
+ * 
+ * This macro checks the log level before formatting the message to avoid
+ * unnecessary string operations when the message would be filtered out.
+ * 
+ * @param logger Logger to use
+ * @param message Message to log (can use stream operators)
+ */
 #define XLOG_INFO(logger, message) \
     do { \
         if (logger->level() <= xlog::Level::INFO) { \
@@ -768,6 +1106,16 @@ private:
         } \
     } while(0)
 
+/**
+ * @def XLOG_WARN
+ * @brief Log a warning message
+ * 
+ * This macro checks the log level before formatting the message to avoid
+ * unnecessary string operations when the message would be filtered out.
+ * 
+ * @param logger Logger to use
+ * @param message Message to log (can use stream operators)
+ */
 #define XLOG_WARN(logger, message) \
     do { \
         if (logger->level() <= xlog::Level::WARN) { \
@@ -777,6 +1125,16 @@ private:
         } \
     } while(0)
 
+/**
+ * @def XLOG_ERROR
+ * @brief Log an error message
+ * 
+ * This macro checks the log level before formatting the message to avoid
+ * unnecessary string operations when the message would be filtered out.
+ * 
+ * @param logger Logger to use
+ * @param message Message to log (can use stream operators)
+ */
 #define XLOG_ERROR(logger, message) \
     do { \
         if (logger->level() <= xlog::Level::ERROR) { \
@@ -786,6 +1144,16 @@ private:
         } \
     } while(0)
 
+/**
+ * @def XLOG_FATAL
+ * @brief Log a fatal error message
+ * 
+ * This macro checks the log level before formatting the message to avoid
+ * unnecessary string operations when the message would be filtered out.
+ * 
+ * @param logger Logger to use
+ * @param message Message to log (can use stream operators)
+ */
 #define XLOG_FATAL(logger, message) \
     do { \
         if (logger->level() <= xlog::Level::FATAL) { \
